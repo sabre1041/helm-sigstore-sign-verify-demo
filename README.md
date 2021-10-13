@@ -89,7 +89,7 @@ helm pull helm-sigstore-sign-verify-demo/podinfo --prov
 
 3. Verify the chart with Helm
 
-Note: If the provided PGP key was used to sign the chart, the public key must be imported into the keyring before executing the following command
+Note: If the provided PGP key was used to sign the chart, the [public key](install/release/overlays/default/) must be imported into the keyring before executing the following command
 
 ```shell
 helm verify --keyring=<keyring> <packaged_chart>
