@@ -1,0 +1,124 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: helm-release
+spec:
+  params:
+    - default: pgp-keys
+      description: PGP Keys
+      name: pgp-secret
+      type: string
+    - name: git-url
+      description: Helm Chart Repository
+      type: string
+    - name: git-revision
+      description: Helm Chart Branch
+      default: main
+      type: string
+    - name: git-gh-pages-revision
+      description: GH Pages Branch
+      default: gh-pages
+      type: string
+    - name: source-subdirectory
+      description: Subdirectory containing the source code
+      default: source
+      type: string
+    - name: index-subdirectory
+      description: Subdirectory containing the Helm index
+      default: index
+      type: string
+    - name: sigstore-plugin-location
+      type: string
+      description: |
+        Location for the sigstore plugin source.
+      default: https://github.com/sabre1041/helm-sigstore-sign-verify-demo
+    - name: helm-chart-dir
+      type: string
+      description: |
+        Directory containing the Helm chart.
+    - name: helm-sign-key
+      type: string
+      description: |
+        Key to sign the Helm Chart.
+  results:
+    - name: helm-chart-checksum
+      description: Checksum of the Helm chart
+      value: $(tasks.package-and-sign.results.helm-chart-checksum)
+    - name: sigstore-rekor-uuid
+      description: UUID of the Chart in sigstore rekor
+      value: $(tasks.package-and-sign.results.sigstore-rekor-uuid)
+  tasks:
+    - name: manage-pgp-keys
+      params:
+        - name: verbose
+          value: "false"
+        - name: image
+          value: quay.io/ablock/tekton-task-helm:latest
+        - name: imagePullPolicy
+          value: IfNotPresent
+        - name: pgp-secret
+          value: $(params.pgp-secret)
+      taskRef:
+        kind: Task
+        name: manage-pgp-keys
+      workspaces:
+        - name: home
+          workspace: home
+        - name: app
+          workspace: app
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-revision)
+        - name: subdirectory
+          value: $(params.source-subdirectory)
+      workspaces:
+        - name: output
+          workspace: app
+      runAfter:
+        - "manage-pgp-keys"
+    - name: git-clone-gh-pages
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.git-gh-pages-revision)
+        - name: subdirectory
+          value: $(params.index-subdirectory)
+      workspaces:
+        - name: output
+          workspace: app
+      runAfter:
+        - "manage-pgp-keys"
+    - name: package-and-sign
+      taskRef:
+        name: helm-package-sign
+        kind: Task
+      params:
+        - name: sigstore-plugin-location
+          value: $(params.sigstore-plugin-location)
+        - name: helm-chart-dir
+          value: $(params.helm-chart-dir)
+        - name: helm-sign-key
+          value: $(params.helm-sign-key)
+        - name: git-url
+          value: $(params.git-url)
+      workspaces:
+        - name: app
+          workspace: app
+        - name: home
+          workspace: home
+      runAfter:
+        - "git-clone"
+        - "git-clone-gh-pages"
+  workspaces:
+    - name: home
+    - name: app

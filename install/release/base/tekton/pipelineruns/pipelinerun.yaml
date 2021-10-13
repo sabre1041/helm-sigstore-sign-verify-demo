@@ -1,0 +1,39 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: helm-release-
+spec:
+  params:
+    - name: pgp-secret
+      value: pgp-keys
+    - name: git-url
+      value: https://github.com/sabre1041/helm-sigstore-sign-verify-demo
+    - name: git-revision
+      value: main
+    - name: sigstore-plugin-location
+      value: https://github.com/sigstore/helm-sigstore
+    - name: helm-chart-dir
+      value: helm/charts/podinfo
+    - name: helm-sign-key
+      value: developer@helm.sh
+  pipelineRef:
+    name: helm-release
+  serviceAccountName: pipeline
+  timeout: 1h0m0s
+  workspaces:
+    - name: home
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Mi
+    - name: app
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Mi

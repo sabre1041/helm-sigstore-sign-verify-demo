@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: helm-release
+
+resources:
+  - namespace.yaml
+  - tekton/tasks
+  - tekton/pipelines
+
+secretGenerator:
+  - name: github-token
+    envs:
+      - github-token
+
+generatorOptions:
+  disableNameSuffixHash: true

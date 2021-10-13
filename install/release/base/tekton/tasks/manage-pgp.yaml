@@ -1,0 +1,76 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: manage-pgp-keys
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.14.0"
+    tekton.dev/tags: pgp,gpg
+    tekton.dev/displayName: Manage PGP Keys
+spec:
+  workspaces:
+    - name: home
+      mountPath: /home/tekton
+      description: |
+        Workspace for the container users home directory.
+
+        Important because the home directory is where GPG will install the PGP keys for use by
+        future steps.
+    - name: app
+      description: |
+        Workspace for the application
+  params:
+    - name: verbose
+      description: log the commands used during execution
+      type: string
+      default: "false"
+    - name: image
+      type: string
+      description: |
+        Container image to run the steps of this task in.
+      default: quay.io/ablock/tekton-task-helm:latest
+    - name: imagePullPolicy
+      type: string
+      description: |
+        Policy for pulling new versions of the given image.
+      default: IfNotPresent
+    - name: pgp-secret
+      type: string
+  volumes:
+    - name: pgp-private-keys
+      secret:
+        secretName: "$(params.pgp-secret)"
+  steps:
+    - name: manage-pgp-key
+      image: $(params.image)
+      imagePullPolicy: $(params.imagePullPolicy)
+      env:
+        - name: HOME
+          value: $(workspaces.home.path)
+      volumeMounts:
+        - name: pgp-private-keys
+          mountPath: /var/pgp-private-keys
+      script: |
+        #!/bin/sh
+        set -eu -o pipefail
+
+        echo
+        echo "*******************"
+        echo "* Manage PGP Keys *"
+        echo "*******************"
+
+        mkdir -p ~/.gnupg
+
+        gpg --batch --import /var/pgp-private-keys/*
+
+        chmod 700 ~/.gnupg
+
+        # Allow for exporting PGP keys
+        export GPG_TTY=$(tty)
+        cat >~/.gnupg/gpg.conf <<EOF
+            use-agent 
+            pinentry-mode loopback
+        EOF
+
+        # Export Keys
+        gpg --export >~/.gnupg/pubring.gpg
+        gpg --export-secret-keys >~/.gnupg/secring.gpg

@@ -1,0 +1,146 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: helm-package-sign
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.14.0"
+    tekton.dev/tags: helm,sigstore,rekor
+    tekton.dev/displayName: Package and Sign Helm chart
+spec:
+  workspaces:
+    - name: home
+      mountPath: /home/tekton
+      description: |
+        Workspace for the container users home directory.
+    - name: app
+      description: |
+        Workspace for the application
+  params:
+    - name: image
+      type: string
+      description: |
+        Container image to run the steps of this task in.
+      default: quay.io/ablock/tekton-task-helm:latest
+    - name: imagePullPolicy
+      type: string
+      description: |
+        Policy for pulling new versions of the given image.
+      default: IfNotPresent
+    - name: sigstore-plugin-location
+      type: string
+      description: |
+        Location for the sigstore plugin source.
+      default: https://github.com/sigstore/helm-sigstore
+    - name: helm-chart-dir
+      type: string
+      description: |
+        Location of the Helm Chart.
+    - name: helm-sign-key
+      type: string
+      description: |
+        Key to sign the Helm chart.
+    - name: source-dir
+      type: string
+      default: source
+      description: |
+        Directory containing the source code.
+    - name: index-dir
+      default: index
+      type: string
+      description: |
+        Directory containing the index.
+    - name: git-url
+      type: string
+      description: |
+        Git URL.
+  results:
+    - name: helm-chart-checksum
+      description: Checksum of the Helm chart
+    - name: sigstore-rekor-uuid
+      description: UUID of the Chart in sigstore rekor
+  steps:
+    - name: sigstore-plugin
+      image: $(params.image)
+      imagePullPolicy: $(params.imagePullPolicy)
+      env:
+        - name: HOME
+          value: $(workspaces.home.path)
+      workingDir: $(workspaces.app.path)/$(params.source-dir)
+      script: |
+        #!/bin/sh
+        set -eu -o pipefail
+
+        helm plugin install $(params.sigstore-plugin-location)
+    - name: chart-releaser
+      image: $(params.image)
+      imagePullPolicy: $(params.imagePullPolicy)
+      env:
+        - name: HOME
+          value: $(workspaces.home.path)
+        - name: CR_VERSION
+          value: "1.2.1"
+      workingDir: $(workspaces.home.path)
+      script: |
+        #!/bin/sh
+        set +x
+
+        mkdir -p $HOME/bin
+        curl -L "https://github.com/helm/chart-releaser/releases/download/v${CR_VERSION}/chart-releaser_${CR_VERSION}_linux_amd64.tar.gz" | tar -xzv -C $HOME/bin cr
+    - name: helm-package-sign
+      image: $(params.image)
+      imagePullPolicy: $(params.imagePullPolicy)
+      env:
+        - name: HOME
+          value: $(workspaces.home.path)
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: github-token
+              key: token
+      workingDir: $(workspaces.app.path)/$(params.source-dir)
+      script: |
+        #!/bin/sh
+        set -eu -o pipefail
+
+        # Set Variables
+        PACKAGED_CHARTS_DIR=$(pwd)/.cr-release-packages
+        CHART_DIR=$(pwd)/$(params.helm-chart-dir)
+        CHART_NAME=$(basename $(params.helm-chart-dir))
+        CHART_VERSION=$(sed -n -e 's/^version: //p' ${CHART_DIR}/Chart.yaml)
+        CHART_PACKAGE=${CHART_NAME}-${CHART_VERSION}.tgz
+        SIGSTORE_REKOR_UUID_FILE=/tmp/${CHART_PACKAGE}.uuid
+        CHART_REPO_REPO=$(echo $(params.git-url) | awk -F"/" '{ print $NF}')
+        CHART_REPO_ORG=$(echo $(params.git-url) | awk -F"/" '{ print $(NF-1)}')
+        INDEX_DIR=$(workspaces.app.path)/$(params.index-dir)
+        CR=$HOME/bin/cr
+
+        # Create Dest Dir
+        mkdir -p ${PACKAGED_CHARTS_DIR}
+
+        echo "-- Signing and Packaging Helm Chart: $(params.helm-chart-dir) --"
+        $CR package --sign --key=$(params.helm-sign-key) --keyring=$(workspaces.home.path)/.gnupg/secring.gpg $(params.helm-chart-dir)
+
+        # Upload
+        echo
+        echo "-- Uploading Release: ${CHART_VERSION} --"
+        $CR upload -o ${CHART_REPO_ORG} -r ${CHART_REPO_REPO} --token ${GITHUB_TOKEN}
+
+        # Index
+        $CR index -o ${CHART_REPO_ORG} -r ${CHART_REPO_REPO} -c https://${CHART_REPO_ORG}.github.io/${CHART_REPO_REPO}/ -i ${INDEX_DIR}/index.yaml
+
+        # Push gh-pages branch
+        git -C ${INDEX_DIR} config user.email "developer@helm.sh"
+        git -C ${INDEX_DIR} config user.name "Helm Developer"
+        git -C ${INDEX_DIR} add ${INDEX_DIR}/index.yaml
+        git -C ${INDEX_DIR} commit -m "Added Chart ${CHART_NAME}-${CHART_VERSION}"
+        git -C ${INDEX_DIR} remote add gh-pages $(echo "https://github.com/${CHART_REPO_ORG}/${CHART_REPO_REPO}.git"|sed "s,https://github.com/,https://${GITHUB_TOKEN}@github.com/,")
+        git -C ${INDEX_DIR} push gh-pages HEAD:gh-pages
+
+
+        echo
+        echo "Sigstore uploading packaged chart to rekor"
+        helm sigstore upload --keyring=$(workspaces.home.path)/.gnupg/secring.gpg ${PACKAGED_CHARTS_DIR}/${CHART_PACKAGE} | tee -a ${SIGSTORE_REKOR_UUID_FILE}
+
+        # Set results
+        cat ${SIGSTORE_REKOR_UUID_FILE} | tail -1 | awk -F'/' '{print $NF}' > $(results.sigstore-rekor-uuid.path)
+        sha256sum ${PACKAGED_CHARTS_DIR}/${CHART_PACKAGE} | awk '{ print $1 }' > $(results.helm-chart-checksum.path)
