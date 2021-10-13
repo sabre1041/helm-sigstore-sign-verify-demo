@@ -12,7 +12,7 @@ Demonstration of packaging and signing [Helm](https://helm.sh/) charts using too
 1. [Tekton](https://tekton.dev/) must be deployed to the environment. Follow [these steps](https://tekton.dev/docs/getting-started/) to install Tekton to the Kubernetes environment.
 2. A [GitHub Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token) must be available to enable publishing the release to GitHub.
 3. PGP based encryption is used to sign the Helm chart. A sample public and private keypair is provided. Alternatively, a user provided keypair can be used. No additional action is needed when using the provided keypair.
-
+4. [rekor-cli](https://github.com/sigstore/rekor/releases), [helm](https://github.com/helm/helm/releases) and of course [kubectl](https://github.com/kubernetes/kubectl/releases) will need to be installed locally to execute this demo.
 
 ### Release Pipeline
 
